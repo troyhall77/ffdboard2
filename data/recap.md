@@ -1,0 +1,7 @@
+_Preview generated from sample data -- real recaps appear during the season._
+
+Well, well, well. Jim Cramer's Stock Picks decided this was the week to actually follow his own advice for once, dropping a cool 152.6 on Randleman Ruff Ryders like he was yelling "BUY BUY BUY" into a camera at 3am. That's not a win, that's a hostile takeover — 64.6 points of pure disrespect. Meanwhile the Ruff Ryders put up 88.0 and looked more like a "sell everything and move to a cabin in the woods" portfolio. Rough week to exist, fellas.
+
+Over in the "please stop giving me anxiety" division, Nabers in Paris survived a genuine nail-biter against Randleman Rampage, 141.7 to 139.9. That's a 1.8 point margin, which is basically a coin flip that landed on its edge and rolled for ten minutes before deciding your fate. Randleman Rampage, I am so sorry — you scored MORE than the blowout winner tonight and still went home with an L. Fantasy football has no soul.
+
+And let's not forget The Aura Farmer, quietly cooking up 128.4 points and taking down Lockette 96.2 like it was just another Tuesday at the farmers market. Solid, unspectacular, effective — the vibes were immaculate. As for everyone else, get some rest, hug your bench players, and maybe check your lineup before kickoff next time. See you all next week, when Jim Cramer will probably tell us to invest in whoever he just beat.

@@ -1,0 +1,21 @@
+# --- Secrets: never commit these ---
+.env
+.streamlit/secrets.toml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# NOTE: data/ is intentionally NOT ignored. The committed parquet files are the
+# app's "database" -- the deployed dashboard reads them from the repo, and the
+# GitHub Actions update them there. Do not add data/ to this file.

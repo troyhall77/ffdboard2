@@ -1,0 +1,54 @@
+name: Weekly recap
+
+on:
+  # 12:00 UTC every Tuesday -- an hour after the daily job, and after Monday
+  # night's game is final, so the completed week is settled before we recap it.
+  schedule:
+    - cron: '0 12 * * 2'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Same group as the daily workflow so they can't push over each other.
+concurrency:
+  group: data-writes
+  cancel-in-progress: false
+
+jobs:
+  recap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: python -m pip install -r requirements.txt
+
+      - name: Refresh league data and write recap
+        env:
+          LEAGUE_ID: ${{ vars.LEAGUE_ID }}
+          SEASON: ${{ vars.SEASON }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          SWID: ${{ secrets.SWID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python scripts/fetch_league.py
+          python scripts/generate_recap.py
+
+      - name: Commit recap
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Weekly recap [skip ci]"
+            git pull --rebase origin ${{ github.ref_name }}
+            git push
+          fi
