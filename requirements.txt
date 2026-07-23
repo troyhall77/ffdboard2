@@ -1,4 +1,8 @@
 polars
+numpy
+pandas
+pyarrow
+altair
 nflreadpy
 requests
 espn-api

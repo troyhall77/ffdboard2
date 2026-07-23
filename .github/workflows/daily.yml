@@ -31,7 +31,7 @@ jobs:
 
       - run: python -m pip install -r requirements.txt
 
-      - name: Fetch data
+      - name: Fetch data and simulate
         env:
           LEAGUE_ID: ${{ vars.LEAGUE_ID }}
           SEASON: ${{ vars.SEASON }}
@@ -41,11 +41,11 @@ jobs:
           python scripts/fetch_crosswalk.py
           python scripts/fetch_projections.py
           python scripts/fetch_league.py
+          python scripts/simulate_projections.py
 
       - name: Commit refreshed data
-        # always() runs this even if a fetch failed, so data that DID refresh
-        # (e.g. projections) still gets saved when only the ESPN pull breaks --
-        # while the job still reports failure so you get notified.
+        # always() runs this even if a step failed, so data that DID refresh
+        # still gets saved while the job still reports failure so you're notified.
         if: always()
         run: |
           git config user.name "github-actions[bot]"
