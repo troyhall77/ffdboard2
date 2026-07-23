@@ -5,9 +5,9 @@ The dashboard. A live program: Streamlit runs this script to render the page and
 RE-RUNS it on every interaction, which is why data loading is cached.
 
 It only reads from data/. It never calls ESPN or Sleeper, and it does no modeling
-of its own -- the charts are drawn from percentiles the simulator already saved.
-Missing files (weekly projections, rosters, matchups, recap, sim) degrade to
-gentle placeholders.
+of its own -- the distribution curve is rebuilt from percentiles the simulator
+already saved. Missing files (weekly projections, rosters, matchups, recap, sim)
+degrade to gentle placeholders.
 
 Run locally with:  streamlit run app/streamlit_app.py
 """
@@ -77,42 +77,6 @@ def render_league():
         st.caption("The weekly recap will be generated here during the season.")
 
 
-def range_chart(frame, n):
-    """Floor-to-ceiling bars for the top n players, with a tick at the median.
-
-    This is the comparison view: two players can share a projection and have very
-    different risk, and that shows up as bar width."""
-    top = (
-        frame.drop_nulls("sim_floor")
-        .head(n)
-        .select(
-            pl.col("name").alias("Player"),
-            pl.col("sim_floor").alias("Floor"),
-            pl.col("sim_median").alias("Median"),
-            pl.col("sim_ceiling").alias("Ceiling"),
-        )
-    )
-    if not top.height:
-        return None
-
-    order = top["Player"].to_list()   # already sorted by projection
-    pdf = top.to_pandas()
-
-    base = alt.Chart(pdf).encode(
-        y=alt.Y("Player:N", sort=order, title=None)
-    )
-    bars = base.mark_bar(size=9, opacity=0.45, color="#4C78A8").encode(
-        x=alt.X("Floor:Q", title="Simulated season points (PPR)",
-                scale=alt.Scale(zero=False)),
-        x2="Ceiling:Q",
-        tooltip=["Player", "Floor", "Median", "Ceiling"],
-    )
-    ticks = base.mark_tick(thickness=2, size=16, color="#2C3E50").encode(
-        x="Median:Q", tooltip=["Player", "Median"]
-    )
-    return (bars + ticks).properties(height=max(220, 22 * top.height))
-
-
 def density_chart(row):
     """Approximate distribution for one player, rebuilt from saved percentiles.
 
@@ -142,7 +106,63 @@ def density_chart(row):
     rules = alt.Chart(marks).mark_rule(strokeDash=[4, 3], color="#2C3E50").encode(
         x="x:Q", tooltip=["label", "x"]
     )
-    return (area + rules).properties(height=260)
+    return (area + rules).properties(height=300)
+
+
+def _density_points(row):
+    """Percentiles -> (points, likelihood) step coordinates for one player."""
+    vals = [row[c] for c in PCT_COLS]
+    step = (PCTS[1] - PCTS[0]) / 100.0
+    xs, ys = [], []
+    for a, b in zip(vals[:-1], vals[1:]):
+        width = max(b - a, 1e-6)
+        xs += [a, b]
+        ys += [step / width, step / width]
+    return xs, ys
+
+
+def compare_density_chart(rows):
+    """Overlay several players' distributions. Lines rather than filled areas so
+    four overlapping curves stay readable."""
+    frames = []
+    for row in rows:
+        xs, ys = _density_points(row)
+        frames.append(pl.DataFrame({
+            "points": xs, "likelihood": ys, "Player": [row["name"]] * len(xs),
+        }))
+    pdf = pl.concat(frames).to_pandas()
+    return alt.Chart(pdf).mark_line(
+        interpolate="step-after", strokeWidth=2, opacity=0.85
+    ).encode(
+        x=alt.X("points:Q", title="Season points (PPR)", scale=alt.Scale(zero=False)),
+        y=alt.Y("likelihood:Q", title="Relative likelihood", axis=None),
+        color=alt.Color("Player:N", title=None),
+        tooltip=["Player", alt.Tooltip("points:Q", title="points")],
+    ).properties(height=320)
+
+
+def compare_range_chart(rows):
+    """Floor-to-ceiling bars for the selected players, tick at the median.
+    Wider bar = riskier player."""
+    pdf = pl.DataFrame({
+        "Player": [r["name"] for r in rows],
+        "Floor": [r["sim_floor"] for r in rows],
+        "Median": [r["sim_median"] for r in rows],
+        "Ceiling": [r["sim_ceiling"] for r in rows],
+    }).to_pandas()
+    order = [r["name"] for r in rows]
+
+    base = alt.Chart(pdf).encode(y=alt.Y("Player:N", sort=order, title=None))
+    bars = base.mark_bar(size=11, opacity=0.55).encode(
+        x=alt.X("Floor:Q", title="Season points (PPR)", scale=alt.Scale(zero=False)),
+        x2="Ceiling:Q",
+        color=alt.Color("Player:N", legend=None),
+        tooltip=["Player", "Floor", "Median", "Ceiling"],
+    )
+    ticks = base.mark_tick(thickness=2, size=18, color="#2C3E50").encode(
+        x="Median:Q", tooltip=["Player", "Median"]
+    )
+    return (bars + ticks).properties(height=max(120, 34 * len(rows)))
 
 
 def render_projections():
@@ -202,32 +222,44 @@ def render_projections():
                "season simulation (PPR, v1). Reflects weekly and injury luck, "
                "not uncertainty in the projection itself.")
 
+    if not has_pcts:
+        st.caption("Re-run the simulator to enable the distribution curve.")
+        return
+
     st.divider()
-    st.subheader("Outcome ranges")
-    st.caption("Bar spans floor to ceiling; the tick marks the median. Wider bar "
-               "= riskier player. Note the simulation is PPR-based, so these "
-               "ranges stay on the PPR scale even if you switch scoring above.")
+    st.subheader("Outcome distribution")
 
-    n = st.slider("Players to compare", 5, 40, 15)
-    chart = range_chart(filtered, n)
-    if chart is None:
+    named = filtered.drop_nulls("sim_floor")
+    if not named.height:
         st.info("No simulated players in this filter (K and DEF aren't modeled yet).")
-    else:
-        st.altair_chart(chart, use_container_width=True)
+        return
 
-    if has_pcts:
-        st.subheader("Single player distribution")
-        named = filtered.drop_nulls("sim_floor")
-        if named.height:
-            who = st.selectbox("Player", named["name"].to_list())
-            row = named.filter(pl.col("name") == who).row(0, named=True)
-            st.altair_chart(density_chart(row), use_container_width=True)
-            st.caption(
-                f"{who}: floor {row['sim_floor']:.0f} - median "
-                f"{row['sim_median']:.0f} - ceiling {row['sim_ceiling']:.0f} PPR points."
-            )
-    else:
-        st.caption("Re-run the simulator to enable per-player distribution curves.")
+    who = st.selectbox("Player", named["name"].to_list())
+    row = named.filter(pl.col("name") == who).row(0, named=True)
+    st.altair_chart(density_chart(row), use_container_width=True)
+    st.caption(
+        f"{who}: floor {row['sim_floor']:.0f} - median {row['sim_median']:.0f} - "
+        f"ceiling {row['sim_ceiling']:.0f} PPR points. Ranges are PPR-based "
+        "regardless of the scoring selector above."
+    )
+
+    st.divider()
+    st.subheader("Compare players")
+    st.caption("Type to search, click to add. Curves further right are better; "
+               "flatter and wider means riskier.")
+
+    names = named["name"].to_list()
+    picks = st.multiselect(
+        "Players to compare", names, default=names[:2], max_selections=5
+    )
+    if len(picks) < 2:
+        st.caption("Pick at least two players to compare.")
+        return
+
+    rows = [named.filter(pl.col("name") == p).row(0, named=True) for p in picks]
+    st.altair_chart(compare_density_chart(rows), use_container_width=True)
+    st.altair_chart(compare_range_chart(rows), use_container_width=True)
+    st.caption("Bars span floor (p10) to ceiling (p90); the tick marks the median.")
 
 
 st.title("League Dashboard")
