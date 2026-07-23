@@ -2,8 +2,13 @@
 simulate_projections.py
 
 Turns each Sleeper SEASON projection into a range of outcomes -- floor (p10),
-median (p50), ceiling (p90) -- by simulating many availability-gated, gamma-
-distributed seasons. Writes data/projections_sim.parquet for the dashboard.
+median (p50), ceiling (p90), plus a full percentile grid -- by simulating many
+availability-gated, gamma-distributed seasons. Writes data/projections_sim.parquet.
+
+The percentile grid (p05..p95 in 5-point steps) is what lets the dashboard draw
+distribution curves without re-running the simulation. Each adjacent pair of
+percentiles brackets 5% of the outcomes, so the app can reconstruct an
+approximate density from them -- cheap to store, no modeling logic in the app.
 
 v1 scope: this is an OUTCOME-variance model. It treats the Sleeper projection as
 the correct mean and simulates weekly luck + injuries around it. It does NOT yet
@@ -28,6 +33,10 @@ N_SIMS = 5000      # simulated seasons per player
 N_WEEKS = 17       # games in a season (one bye)
 POSITIONS = ["QB", "RB", "WR", "TE"]   # positions we have variance params for
 PROJ_COL = "pts_ppr"                   # matches how variance was measured (PPR)
+
+# Percentile grid saved per player. 5-point steps keep the file small while
+# giving the dashboard enough resolution to draw a smooth-ish curve.
+PCTS = list(range(5, 100, 5))          # 5, 10, ..., 95
 
 
 def load_tiers(params):
@@ -79,18 +88,20 @@ def main():
             continue
         cv, avail = hit
         season = simulate_player(r[PROJ_COL], cv, avail, rng)
-        p10, p50, p90 = np.percentile(season, [10, 50, 90])
-        records.append({
-            "player_id": r["player_id"],   # join key back to the projections table
-            "sim_floor": round(float(p10), 1),
-            "sim_median": round(float(p50), 1),
-            "sim_ceiling": round(float(p90), 1),
-        })
+        qs = np.percentile(season, PCTS)
+
+        rec = {"player_id": r["player_id"]}   # join key back to the projections table
+        rec.update({f"p{p:02d}": round(float(v), 1) for p, v in zip(PCTS, qs)})
+        # Named aliases for the table view (these are just p10 / p50 / p90).
+        rec["sim_floor"] = rec["p10"]
+        rec["sim_median"] = rec["p50"]
+        rec["sim_ceiling"] = rec["p90"]
+        records.append(rec)
 
     sim = pl.DataFrame(records)
     sim.write_parquet(DATA / "projections_sim.parquet")
     print(f"Simulated {sim.height} players -> data/projections_sim.parquet")
-    print(sim.head())
+    print(sim.select(["player_id", "sim_floor", "sim_median", "sim_ceiling"]).head())
 
 
 if __name__ == "__main__":
