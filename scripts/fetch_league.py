@@ -5,7 +5,7 @@ Pulls your ESPN league data and saves it for the dashboard:
     data/standings.parquet      team records + points for/against
     data/rosters.parquet        every team's roster
     data/matchups.parquet       current-week head-to-head (in-season only)
-    data/matchups_last.parquet  the last completed week's results (for the recap)
+    data/matchups_last.parquet  the last completed week's results (for the awards)
     data/schedule.parquet       every team's weekly opponent + result
     data/league_weekly.parquet  player-level box scores, every week so far
     data/transactions.parquet   every waiver / trade / add / drop this season
@@ -261,8 +261,8 @@ def main():
     print(f"Standings: {standings.height} teams -> data/standings.parquet")
     print(standings.head())
 
-    # The recap needs the last FINISHED week, which isn't the same as the
-    # "current" week -- ESPN can roll current_week forward before Tuesday's job.
+    # The awards need the last FINISHED week, which isn't the same as the
+    # "current" week -- ESPN rolls current_week forward as soon as a week ends.
     schedule = build_schedule(league)
     last_week = last_completed_week(schedule) if schedule is not None else None
     last_matchups = build_matchups(league, last_week) if last_week else None

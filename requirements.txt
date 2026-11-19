@@ -7,5 +7,4 @@ nflreadpy
 requests
 espn-api
 python-dotenv
-anthropic
 streamlit

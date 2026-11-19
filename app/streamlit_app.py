@@ -34,7 +34,7 @@ METHOD_LABELS = {"sleeper": "Sleeper", "blend": "Our model", "espn": "ESPN",
                  "ppg": "Season PPG"}
 INK = "#52514e"
 
-st.set_page_config(page_title="League Dashboard", layout="wide")
+st.set_page_config(page_title="Gun Squad League Dashboard", layout="wide")
 
 
 @st.cache_data(ttl=3600)
@@ -345,14 +345,80 @@ def render_league():
                    "lineup from its current roster; ties on wins break on points for.")
 
     render_matchups()
+    render_awards()
 
-    st.subheader("Weekly recap")
-    recap = DATA / "recap.md"
-    if recap.exists():
-        # encoding="utf-8" so em-dashes render correctly on any platform.
-        st.markdown(recap.read_text(encoding="utf-8"))
-    else:
-        st.caption("The weekly recap will be generated here during the season.")
+
+def weekly_awards():
+    """Last completed week's five awards, as (emoji, title, winner, detail)
+    tuples. Scores come from matchups_last; projections and bench points from
+    the ESPN box scores (league_weekly) -- ESPN's pregame numbers, i.e. what
+    managers saw when they set lineups. Returns (week, awards) or (None, [])."""
+    last = load("matchups_last")
+    lw = load("league_weekly")
+    if last is None or not last.height or lw is None:
+        return None, []
+    week = int(last["week"][0])
+    awards = []
+
+    # Head-to-head margins (byes have no opponent and are skipped).
+    games = []
+    for g in last.drop_nulls(["home_team", "away_team"]).iter_rows(named=True):
+        (w, ws), (l, ls) = sorted(
+            [(g["home_team"].strip(), g["home_score"]), (g["away_team"].strip(), g["away_score"])],
+            key=lambda t: t[1], reverse=True)
+        if ws > ls:
+            games.append((ws - ls, w, ws, l, ls))
+    if games:
+        m, w, ws, l, ls = max(games)
+        awards.append(("💪", "Biggest Chad", w,
+                       f"Beat {l} by {m:.1f} ({ws:.1f}–{ls:.1f})"))
+        m, w, ws, l, ls = min(games)
+        awards.append(("🍀", "Lucky Bastard", w,
+                       f"Snuck past {l} by {m:.1f} ({ws:.1f}–{ls:.1f})"))
+
+    # Starters' actual vs ESPN projection.
+    wk = lw.filter(pl.col("week") == week).with_columns(pl.col("team_name").str.strip_chars())
+    starters = wk.filter(~pl.col("slot").is_in(["BE", "IR"]))
+    vs_proj = (starters.group_by("team_name")
+               .agg(actual=pl.col("points").sum(), proj=pl.col("projected_points").sum())
+               .with_columns(diff=pl.col("actual") - pl.col("proj"))
+               .sort("diff"))
+    if vs_proj.height:
+        top = vs_proj.row(-1, named=True)
+        awards.append(("🚀", "Never Tell Me the Odds", top["team_name"],
+                       f"Scored {top['actual']:.1f} vs {top['proj']:.1f} projected "
+                       f"({top['diff']:+.1f})"))
+        bot = vs_proj.row(0, named=True)
+        awards.append(("💩", "You FUCKING suck", bot["team_name"],
+                       f"Scored {bot['actual']:.1f} vs {bot['proj']:.1f} projected "
+                       f"({bot['diff']:+.1f})"))
+
+    # Best score left out of a lineup (bench or IR).
+    bench = wk.filter(pl.col("slot").is_in(["BE", "IR"])).sort("points", descending=True)
+    if bench.height:
+        b = bench.row(0, named=True)
+        awards.append(("🔥", "Red Hot Benchwarmer", b["name"],
+                       f"{b['points']:.1f} pts on {b['team_name']}'s bench "
+                       f"({b['position']})"))
+    return week, awards
+
+
+def render_awards():
+    week, awards = weekly_awards()
+    if not awards:
+        st.subheader("Weekly awards")
+        st.caption("Awards appear once the first week is in the books.")
+        return
+    st.subheader(f"Week {week} awards")
+    # Five across on desktop; Streamlit stacks the columns on narrow screens.
+    for col, (emoji, title, winner, detail) in zip(st.columns(len(awards)), awards):
+        with col, st.container(border=True):
+            st.markdown(f"<div style='font-size:2rem;line-height:1'>{emoji}</div>"
+                        f"<div style='font-weight:800;margin:0.4rem 0 0.25rem'>"
+                        f"{html.escape(title)}</div>"
+                        f"<div style='font-size:1.05rem'>{html.escape(winner)}</div>",
+                        unsafe_allow_html=True)
+            st.caption(detail)
 
 
 def win_prob_chart(odds, col):
@@ -769,7 +835,7 @@ if st.query_params.get("view") == "moves":
     render_moves_feed()
     st.stop()
 
-st.title("🏈 League Dashboard")
+st.title("🏈 Gun Squad League Dashboard")
 render_ticker()
 league_tab, projections_tab, accuracy_tab = st.tabs(["League", "Projections", "Model accuracy"])
 with league_tab:

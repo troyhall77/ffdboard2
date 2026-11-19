@@ -1,9 +1,0 @@
-_Preview generated from sample data -- real recaps appear during the season._
-
-## Week Recap: Somebody Check on Randleman Ruff Ryders
-
-Alright degenerates, gather round. Jim Cramer's Stock Picks went absolutely nuclear this week, dropping 152.6 points like he's got insider information on the waiver wire (he doesn't, he just got lucky, calm down). That's the kind of score that makes you check the box score twice and then go cry in the shower. And who's on the other side of that massacre? Randleman Ruff Ryders, who put up a putrid 88.0 and got run over like they owed Cramer money. That's not a loss, that's a hostage situation. 64.6 points is the kind of margin where you don't even talk trash after, you just quietly change your lineup settings and pray nobody screenshots it.
-
-Speaking of getting smoked, Randleman Ruff Ryders — my brother in Christ, 88 points? Your bench probably outscored your starters. Somewhere your kicker is filing a restraining order against your decision-making. Meanwhile The Aura Farmer strolled to a nice comfortable win over Lockette, 128.4 to 96.2, nothing crazy, just steady vibes and good "aura" apparently, whatever that means. Keep farming, I guess.
-
-But the real nail-biter, the game that had people refreshing their apps like it was a Black Friday drop, was Nabers in Paris grinding out a 141.7-139.9 win over Randleman Rampage. 1.8 points. ONE POINT EIGHT. That's a missed extra point, a garbage-time reception, a coin flip with extra steps. Randleman Rampage is gonna be replaying that lineup decision in their nightmares for the next decade while Nabers in Paris gets to strut around pretending it was skill and not pure dumb luck. Either way — great week for chaos, brutal week for Ruff Ryders' self-esteem. See you all next week.
