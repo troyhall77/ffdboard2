@@ -49,6 +49,12 @@ def pct(x):
     return f"{x:.0%}" if x is not None else "-"
 
 
+def chart_surface():
+    """Background behind Altair charts in the active theme. Bar strokes use it so
+    the 2px gap between adjacent fills reads as a gap, not a white outline."""
+    return "#0e1117" if getattr(st.context.theme, "type", None) == "dark" else "#ffffff"
+
+
 # ======================================================================= Look & feel
 
 def apply_theme():
@@ -423,37 +429,50 @@ def render_awards():
 
 def win_prob_chart(odds, col):
     """One bar per game split at the home team's win probability. Home on the
-    left (slot 1), away on the right (slot 2), 50% rule for reference."""
-    rows = []
-    for r in odds.iter_rows(named=True):
-        label = f"{r['home_team']}  vs  {r['away_team']}"
+    left (slot 1), away on the right (slot 2), 50% rule for reference.
+
+    Team names sit ON the bar -- home above its left end, away below its right
+    end -- instead of in a y-axis gutter, so the bar gets the full width at any
+    screen size (a phone included) and two long names can never collide."""
+    dark = getattr(st.context.theme, "type", None) == "dark"
+    ink = "#f0efec" if dark else "#31333f"
+    rows, games = [], []
+    for i, r in enumerate(odds.iter_rows(named=True)):
         p = r[col]
+        home, away = r["home_team"].strip(), r["away_team"].strip()
+        games.append({"Game": i, "Home": home, "Away": away})
         rows += [
-            {"Game": label, "Team": r["home_team"], "Side": "Home", "start": 0.0,
-             "end": p, "Win %": p},
-            {"Game": label, "Team": r["away_team"], "Side": "Away", "start": p,
-             "end": 1.0, "Win %": 1 - p},
+            {"Game": i, "Team": home, "Side": "Home", "start": 0.0, "end": p, "Win %": p},
+            {"Game": i, "Team": away, "Side": "Away", "start": p, "end": 1.0, "Win %": 1 - p},
         ]
     pdf = pl.DataFrame(rows).to_pandas()
-    order = [f"{r['home_team']}  vs  {r['away_team']}" for r in odds.iter_rows(named=True)]
-    base = alt.Chart(pdf).encode(y=alt.Y("Game:N", sort=order, title=None,
-                                         axis=alt.Axis(labelLimit=420)))
-    bars = base.mark_bar(size=18, cornerRadius=4, stroke="white", strokeWidth=2).encode(
-        x=alt.X("start:Q", title="Win probability", axis=alt.Axis(format="%"),
-                scale=alt.Scale(domain=[0, 1])),
+    gdf = pl.DataFrame(games).to_pandas()
+    y = alt.Y("Game:O", axis=None, scale=alt.Scale(paddingInner=0, paddingOuter=0))
+    x_scale = alt.Scale(domain=[0, 1], nice=False)
+
+    bars = alt.Chart(pdf).mark_bar(size=20, cornerRadius=4, stroke=chart_surface(),
+                                   strokeWidth=2).encode(
+        y=y,
+        x=alt.X("start:Q", title="Win probability", scale=x_scale,
+                axis=alt.Axis(format="%", values=[0, 0.25, 0.5, 0.75, 1], grid=False)),
         x2="end:Q",
-        color=alt.Color("Side:N", scale=alt.Scale(domain=["Home", "Away"],
-                                                  range=PALETTE[:2]),
+        color=alt.Color("Side:N", scale=alt.Scale(domain=["Home", "Away"], range=PALETTE[:2]),
                         legend=alt.Legend(orient="top", title=None)),
         tooltip=["Team", alt.Tooltip("Win %:Q", format=".0%")],
     )
     mid = alt.Chart(pl.DataFrame({"x": [0.5]}).to_pandas()).mark_rule(
-        color=INK, strokeDash=[3, 3], opacity=0.6).encode(x="x:Q")
-    labels = base.transform_filter(alt.datum["Win %"] >= 0.12).mark_text(
-        color="white", fontWeight="bold").encode(
-        x=alt.X("mid:Q"), text=alt.Text("Win %:Q", format=".0%"),
-    ).transform_calculate(mid="(datum.start + datum.end) / 2")
-    return (bars + mid + labels).properties(height=46 * len(order))
+        color=ink, strokeDash=[3, 3], opacity=0.45).encode(x=alt.X("x:Q", scale=x_scale))
+    pcts = alt.Chart(pdf).transform_filter(alt.datum["Win %"] >= 0.12).transform_calculate(
+        mid="(datum.start + datum.end) / 2").mark_text(
+        color="white", fontWeight="bold", fontSize=12).encode(
+        y=y, x=alt.X("mid:Q", scale=x_scale), text=alt.Text("Win %:Q", format=".0%"))
+    home_names = alt.Chart(gdf).transform_calculate(x="0").mark_text(
+        align="left", baseline="bottom", dy=-13, color=ink, fontSize=13).encode(
+        y=y, x=alt.X("x:Q", scale=x_scale), text="Home:N")
+    away_names = alt.Chart(gdf).transform_calculate(x="1").mark_text(
+        align="right", baseline="top", dy=13, color=ink, fontSize=13).encode(
+        y=y, x=alt.X("x:Q", scale=x_scale), text="Away:N")
+    return (bars + mid + pcts + home_names + away_names).properties(height=78 * len(games))
 
 
 def render_matchups():
@@ -737,7 +756,8 @@ def render_accuracy():
         pl.col("method").replace(METHOD_LABELS).alias("Method")
     ).to_pandas()
     method_names = [METHOD_LABELS[m] for m in methods]
-    chart = alt.Chart(pdf).mark_bar(cornerRadiusEnd=4, stroke="white", strokeWidth=2).encode(
+    chart = alt.Chart(pdf).mark_bar(cornerRadiusEnd=4, stroke=chart_surface(),
+                                    strokeWidth=2).encode(
         x=alt.X("mae:Q", title="Mean absolute error (PPR points)"),
         y=alt.Y("Method:N", sort=method_names, title=None, axis=None),
         color=alt.Color("Method:N", sort=method_names, title=None,
