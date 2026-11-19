@@ -5,6 +5,9 @@ Pulls your ESPN league data and saves it for the dashboard:
     data/standings.parquet      team records + points for/against
     data/rosters.parquet        every team's roster
     data/matchups.parquet       current-week head-to-head (in-season only)
+    data/matchups_last.parquet  the last completed week's results (for the recap)
+    data/schedule.parquet       every team's weekly opponent + result
+    data/league_weekly.parquet  player-level box scores, every week so far
     data/transactions.parquet   recent waivers / trades / adds / drops
 
 This is the ESPN half -- the part you already had working in R with ffscrapr.
@@ -86,23 +89,87 @@ def build_rosters(league):
     return pl.DataFrame(rows) if rows else None
 
 
-def build_matchups(league):
-    """Current-week scores. Doesn't exist in the offseason, so we skip cleanly
-    rather than error out."""
+def build_matchups(league, week=None):
+    """One week's head-to-head scores (current week by default). Doesn't exist
+    in the offseason, so we skip cleanly rather than error out."""
     try:
-        box = league.box_scores()
+        box = league.box_scores(week) if week else league.box_scores()
     except Exception as e:
         print(f"  matchups unavailable ({e.__class__.__name__}) -- likely offseason")
         return None
     rows = []
     for m in box:
         rows.append({
+            "week": week or league.current_week,
             # home/away can be 0 on a bye, so guard with getattr.
+            "home_team_id": getattr(m.home_team, "team_id", None),
             "home_team": getattr(m.home_team, "team_name", None),
             "home_score": m.home_score,
+            "home_projected": getattr(m, "home_projected", None),
+            "away_team_id": getattr(m.away_team, "team_id", None),
             "away_team": getattr(m.away_team, "team_name", None),
             "away_score": m.away_score,
+            "away_projected": getattr(m, "away_projected", None),
         })
+    return pl.DataFrame(rows) if rows else None
+
+
+def build_schedule(league):
+    """Every team's regular-season opponent, score and result by week. 'U' =
+    undecided, which is how we tell finished weeks from upcoming ones."""
+    rows = []
+    for t in league.teams:
+        for i, opp in enumerate(t.schedule):
+            rows.append({
+                "week": i + 1,
+                "team_id": t.team_id,
+                "opponent_id": getattr(opp, "team_id", None),
+                "score": t.scores[i] if i < len(t.scores) else None,
+                "outcome": t.outcomes[i] if i < len(t.outcomes) else "U",
+            })
+    return pl.DataFrame(rows) if rows else None
+
+
+def last_completed_week(schedule):
+    done = schedule.filter(pl.col("outcome") != "U")
+    return done["week"].max() if done.height else None
+
+
+def build_league_weekly(league):
+    """Player-level box scores for every week so far, current week included.
+
+    This is ESPN's view: actual points in OUR league's scoring, ESPN's own
+    pregame projection, and the lineup slot each manager used. The backtest uses
+    it to score ESPN's projections and to measure K / D/ST, which nflverse doesn't
+    cover; the matchup sim uses the current week's lineups (and any games already
+    final) to compute live win odds."""
+    rows = []
+    for wk in range(1, league.current_week + 1):
+        try:
+            box = league.box_scores(wk)
+        except Exception as e:
+            print(f"  box scores for week {wk} unavailable ({e.__class__.__name__})")
+            continue
+        for m in box:
+            for side in ("home", "away"):
+                team = getattr(m, f"{side}_team", None)
+                if not hasattr(team, "team_id"):
+                    continue   # bye
+                for p in getattr(m, f"{side}_lineup", []):
+                    rows.append({
+                        "week": wk,
+                        "team_id": team.team_id,
+                        "team_name": team.team_name,
+                        "slot": p.slot_position,
+                        "espn_id": p.playerId,
+                        "name": p.name,
+                        "position": p.position,
+                        "pro_team": p.proTeam,
+                        "points": p.points,
+                        "projected_points": p.projected_points,
+                        # 0 = not started, 100 = final; in between = in progress.
+                        "game_played": getattr(p, "game_played", None),
+                    })
     return pl.DataFrame(rows) if rows else None
 
 
@@ -146,10 +213,27 @@ def main():
     print(f"Standings: {standings.height} teams -> data/standings.parquet")
     print(standings.head())
 
+    # The recap needs the last FINISHED week, which isn't the same as the
+    # "current" week -- ESPN can roll current_week forward before Tuesday's job.
+    schedule = build_schedule(league)
+    last_week = last_completed_week(schedule) if schedule is not None else None
+    last_matchups = build_matchups(league, last_week) if last_week else None
+
+    s = league.settings
+    settings = pl.DataFrame([{
+        "current_week": league.current_week,
+        "reg_season_count": s.reg_season_count,
+        "playoff_team_count": s.playoff_team_count,
+    }])
+
     # The rest may be empty depending on how far along the 2026 league is.
     for name, frame in [
+        ("league_settings", settings),
         ("rosters", build_rosters(league)),
         ("matchups", build_matchups(league)),
+        ("matchups_last", last_matchups),
+        ("schedule", schedule),
+        ("league_weekly", build_league_weekly(league)),
         ("transactions", build_transactions(league)),
     ]:
         if frame is None:

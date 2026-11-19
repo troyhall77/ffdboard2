@@ -39,9 +39,12 @@ jobs:
           SWID: ${{ secrets.SWID }}
         run: |
           python scripts/fetch_crosswalk.py
+          python scripts/fetch_actuals.py
           python scripts/fetch_projections.py
           python scripts/fetch_league.py
           python scripts/simulate_projections.py
+          python scripts/backtest.py
+          python scripts/project_inseason.py
 
       - name: Commit refreshed data
         # always() runs this even if a step failed, so data that DID refresh

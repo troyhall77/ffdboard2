@@ -35,7 +35,8 @@ ids = nfl.load_ff_playerids()
 # We only need a handful of columns for our joins. We intersect our wish list
 # with what actually came back, so a renamed/missing column won't crash the
 # script -- it just gets skipped.
-wanted = ["sleeper_id", "espn_id", "name", "merge_name", "position", "team"]
+# gsis_id is nflverse's own id -- fetch_actuals.py uses it to key weekly stats.
+wanted = ["sleeper_id", "espn_id", "gsis_id", "name", "merge_name", "position", "team"]
 keep = [c for c in wanted if c in ids.columns]
 crosswalk = ids.select(keep)
 

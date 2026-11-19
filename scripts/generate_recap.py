@@ -14,7 +14,7 @@ no completed week exists, the script runs in DEMO mode -- it invents sample
 scores for your real teams so you can test the whole loop (API call -> recap ->
 dashboard) today. In-season it uses real results automatically, no code change.
 
-Reads:  data/matchups.parquet, data/standings.parquet, data/transactions.parquet
+Reads:  data/matchups_last.parquet, data/standings.parquet, data/transactions.parquet
 Writes: data/recap.md
 """
 
@@ -123,12 +123,14 @@ def generate_recap(facts_text):
 
 
 def main():
-    matchups = load("matchups")
+    # matchups_last = the most recent FINISHED week. (matchups.parquet is the
+    # current week, which on Tuesday morning is usually still 0-0 across the board.)
+    matchups = load("matchups_last")
     standings = load("standings")
     transactions = load("transactions")
 
     if matchups is not None and matchups.height:
-        facts = week_facts(matchups, transactions)
+        facts = f"Week {matchups['week'][0]} results.\n" + week_facts(matchups, transactions)
         demo = False
     else:
         facts = demo_facts(standings)

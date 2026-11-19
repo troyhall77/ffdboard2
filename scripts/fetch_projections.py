@@ -4,6 +4,7 @@ fetch_projections.py
 Pulls Sleeper's projections and saves them with real player names attached:
     data/projections_season.parquet   (full-year totals -- draft/preseason view)
     data/projections_weekly.parquet   (the current week -- in-season view)
+    data/projections_weekly_all.parquet (every week 1-18 -- backtest + sims)
 
 Two things make this simpler than the old per-player approach:
   1. Sleeper has *bulk* projection endpoints that return every player in one
@@ -45,6 +46,8 @@ POSITIONS = ["QB", "RB", "WR", "TE", "K", "DEF"]
 #   pts_half_ppr  = half point per reception
 #   pts_ppr       = full point per reception
 SCORING = ["pts_std", "pts_half_ppr", "pts_ppr"]
+
+N_WEEKS = 18   # NFL regular-season weeks
 
 
 def get_state():
@@ -151,7 +154,9 @@ def enrich(proj, sleeper_players):
         pl.coalesce("team", "s_team").alias("team"),
     ).drop("s_name", "s_position", "s_team")
 
-    return proj
+    # The crosswalk calls kickers "PK"; everything else (Sleeper, ESPN, the app's
+    # position filter) says "K".
+    return proj.with_columns(pl.col("position").replace({"PK": "K"}))
 
 
 def keep_projected(proj):
@@ -200,6 +205,25 @@ def main():
     else:
         print("Not in the regular season yet -- skipping weekly projections "
               "(they'll start populating once the season begins).")
+
+    # ---- Every week of the season, past and future ----
+    # Past weeks are the backtest's "what did Sleeper say before kickoff" (each
+    # record's `date` shows its last update landed on game day, so these are the
+    # final pregame numbers, not retro-fitted to results). Future
+    # weeks drive rest-of-season and playoff sims -- a player on bye simply has no
+    # projection that week, so byes come for free. 18 small calls, once a day.
+    frames = []
+    for wk in range(1, N_WEEKS + 1):
+        rows = fetch_projections(f"{PROJ_BASE}/{season}/{wk}")
+        if rows:
+            frames.append(keep_projected(to_frame(rows)).with_columns(
+                pl.lit(int(season), pl.Int64).alias("season"),
+                pl.lit(wk, pl.Int64).alias("week")))
+    if frames:
+        all_weeks = enrich(pl.concat(frames, how="diagonal_relaxed"), sleeper_players)
+        all_weeks.write_parquet(DATA / "projections_weekly_all.parquet")
+        print(f"All weeks: {all_weeks.height} player-weeks -> "
+              "data/projections_weekly_all.parquet")
 
 
 if __name__ == "__main__":
