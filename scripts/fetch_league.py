@@ -8,7 +8,7 @@ Pulls your ESPN league data and saves it for the dashboard:
     data/matchups_last.parquet  the last completed week's results (for the recap)
     data/schedule.parquet       every team's weekly opponent + result
     data/league_weekly.parquet  player-level box scores, every week so far
-    data/transactions.parquet   recent waivers / trades / adds / drops
+    data/transactions.parquet   every waiver / trade / add / drop this season
 
 This is the ESPN half -- the part you already had working in R with ffscrapr.
 Two things are new compared with the Sleeper scripts:
@@ -22,6 +22,7 @@ Credentials are read from the environment. Locally that comes from a .env file
 either way.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -173,25 +174,72 @@ def build_league_weekly(league):
     return pl.DataFrame(rows) if rows else None
 
 
-def build_transactions(league):
-    """Recent waivers / trades / adds / drops. Also empty on a brand-new
-    league, so we skip cleanly if there's nothing yet."""
-    try:
-        activity = league.recent_activity(size=25)
-    except Exception as e:
-        print(f"  transactions unavailable ({e.__class__.__name__})")
-        return None
+# ESPN activity message types -> what happened. 179/181/239 are all drops
+# (plain, waiver-related, and commissioner/lineup-lock flavors).
+MOVE_TYPES = {178: "FA ADDED", 180: "WAIVER ADDED", 179: "DROPPED",
+              181: "DROPPED", 239: "DROPPED", 244: "TRADED"}
+
+
+def _activity_page(league, offset, size=50):
+    """One page of the league's transaction log, newest first. Same request
+    espn-api's recent_activity() makes, minus its per-player lookups (one extra
+    ESPN call for every dropped player -- minutes for a full season)."""
+    filters = {"topics": {
+        "filterType": {"value": ["ACTIVITY_TRANSACTIONS"]},
+        "limit": size, "limitPerMessageSet": {"value": 25}, "offset": offset,
+        "sortMessageDate": {"sortPriority": 1, "sortAsc": False},
+        "sortFor": {"sortPriority": 2, "sortAsc": False},
+        "filterIncludeMessageTypeIds": {"value": list(MOVE_TYPES)},
+    }}
+    data = league.espn_request.league_get(
+        extend="/communication/", params={"view": "kona_league_communication"},
+        headers={"x-fantasy-filter": json.dumps(filters)})
+    return data.get("topics", [])
+
+
+def build_transactions(league, max_pages=40):
+    """The league's FULL transaction log: every add, drop, waiver claim and
+    trade this season. One row per player moved; rows sharing a `move_id` were
+    one transaction (e.g. an add + the drop that made room). Empty on a
+    brand-new league, so we skip cleanly if there's nothing yet."""
+    teams = {t.team_id: t.team_name for t in league.teams}
     rows = []
-    for a in activity:
-        for action in a.actions:
-            team, act_type, player = action[0], action[1], action[2]
-            rows.append({
-                "date": a.date,  # epoch milliseconds; we'll format at display time
-                "team": getattr(team, "team_name", str(team)),
-                "action": act_type,
-                "player": getattr(player, "name", str(player)),
-            })
-    return pl.DataFrame(rows) if rows else None
+    try:
+        for page in range(max_pages):
+            topics = _activity_page(league, offset=page * 50)
+            for topic in topics:
+                for msg in topic.get("messages", []):
+                    kind = MOVE_TYPES.get(msg.get("messageTypeId"))
+                    if kind is None:
+                        continue
+                    if kind == "TRADED":
+                        team_id, other_id = msg.get("from"), msg.get("to")
+                    elif msg["messageTypeId"] == 239:
+                        team_id, other_id = msg.get("for"), None
+                    else:
+                        team_id, other_id = msg.get("to"), None
+                    rows.append({
+                        "move_id": topic["id"],
+                        "date": topic["date"],   # epoch ms; formatted at display time
+                        "team_id": team_id,
+                        "team": teams.get(team_id, str(team_id)),
+                        "action": kind,
+                        "espn_id": msg.get("targetId"),
+                        "player": league.player_map.get(msg.get("targetId"),
+                                                        str(msg.get("targetId"))),
+                        # trades: the team receiving the player
+                        "to_team": teams.get(other_id) if other_id is not None else None,
+                        # waivers: the FAAB bid ESPN stores in `from`
+                        "bid": msg.get("from") if kind == "WAIVER ADDED" else None,
+                    })
+            if len(topics) < 50:
+                break
+    except Exception as e:
+        print(f"  transactions unavailable ({e.__class__.__name__}: {e})")
+        return None
+    if not rows:
+        return None
+    return pl.DataFrame(rows, infer_schema_length=None).sort("date", descending=True)
 
 
 def main():

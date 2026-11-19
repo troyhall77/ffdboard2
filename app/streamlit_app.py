@@ -12,6 +12,8 @@ Missing files degrade to gentle placeholders.
 Run locally with:  streamlit run app/streamlit_app.py
 """
 
+import html
+from datetime import datetime, timezone
 from pathlib import Path
 
 import altair as alt
@@ -45,6 +47,256 @@ def load(name):
 
 def pct(x):
     return f"{x:.0%}" if x is not None else "-"
+
+
+# ======================================================================= Look & feel
+
+def apply_theme():
+    """Football-field backdrop with the content on a solid card above it.
+
+    The field is pure CSS (no image to host): mowed turf stripes, a yard line
+    every 10%, two rows of hash marks, and a vignette. Readability comes from the
+    card -- 96% opaque in the active theme's surface color -- so text and charts
+    sit on the same background they always did; the field only shows around the
+    edges and behind the header."""
+    dark = getattr(st.context.theme, "type", None) == "dark"
+    turf, card = ("#1d4a24", "rgba(20, 22, 20, 0.96)") if dark else \
+                 ("#2f7a3a", "rgba(252, 252, 251, 0.96)")
+    st.markdown(f"""
+<style>
+.stApp {{
+  background-color: {turf};
+  background-image:
+    radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.38) 100%),
+    repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px),
+                              rgba(255,255,255,0.30) calc(10% - 2px) 10%),
+    repeating-linear-gradient(90deg, transparent 0 calc(2% - 1px),
+                              rgba(255,255,255,0.30) calc(2% - 1px) 2%),
+    repeating-linear-gradient(90deg, transparent 0 calc(2% - 1px),
+                              rgba(255,255,255,0.30) calc(2% - 1px) 2%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.045) 0 5%,
+                              rgba(0,0,0,0.045) 5% 10%);
+  background-size: 100% 100%, 100% 100%, 100% 16px, 100% 16px, 100% 100%;
+  background-position: 0 0, 0 0, 0 36%, 0 64%, 0 0;
+  background-repeat: no-repeat, no-repeat, repeat-x, repeat-x, no-repeat;
+  background-attachment: fixed;
+}}
+header[data-testid="stHeader"] {{ background: transparent; color: #fff; }}
+header[data-testid="stHeader"] button, header[data-testid="stHeader"] a {{ color: #fff !important; }}
+/* The card is inset so the field frames it on every side. */
+.stMainBlockContainer, .block-container {{
+  background: {card};
+  border-radius: 18px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+  width: min(1440px, calc(100% - 7rem));
+  max-width: none;
+  margin: 3.25rem auto 3rem;
+  padding: 1.75rem 2.25rem 2.5rem;
+}}
+@media (max-width: 640px) {{
+  .stMainBlockContainer, .block-container {{
+    width: calc(100% - 1.25rem);
+    padding: 1.25rem 1rem 2rem; border-radius: 12px; margin-top: 2.75rem;
+  }}
+}}
+
+/* ---- League wire ticker ---- */
+.wire {{
+  display: flex; align-items: stretch; overflow: hidden;
+  border-radius: 10px; background: #111312; color: #f0efec;
+  border: 1px solid rgba(255,255,255,0.12);
+  font-size: 0.92rem; margin: 0 0 1.1rem;
+}}
+.wire-label {{
+  flex: none; padding: 0.55rem 0.85rem; background: #eb6834; color: #111312;
+  font-weight: 800; letter-spacing: 0.06em; font-size: 0.78rem;
+  display: flex; align-items: center;
+}}
+.wire-window {{ flex: 1; overflow: hidden; position: relative; }}
+.wire-track {{
+  display: inline-flex; white-space: nowrap; gap: 2.5rem;
+  padding: 0.55rem 0 0.55rem 1.25rem;
+  animation: wire-scroll 45s linear infinite;
+}}
+.wire:hover .wire-track, .wire:focus-within .wire-track {{ animation-play-state: paused; }}
+@keyframes wire-scroll {{ from {{ transform: translateX(0); }} to {{ transform: translateX(-50%); }} }}
+@media (prefers-reduced-motion: reduce) {{
+  .wire-track {{ animation: none; white-space: normal; flex-wrap: wrap; row-gap: 0.4rem; }}
+  .wire-track [aria-hidden="true"] {{ display: none; }}
+}}
+.wire-item {{ display: inline-flex; align-items: center; gap: 0.5rem; }}
+.wire-when {{ color: #a9a89f; font-size: 0.82rem; }}
+.wire-link {{
+  flex: none; display: flex; align-items: center; padding: 0 0.95rem;
+  color: #f0efec !important; text-decoration: none !important; font-weight: 600;
+  border-left: 1px solid rgba(255,255,255,0.14);
+}}
+.wire-link:hover {{ background: rgba(255,255,255,0.08); }}
+.pill {{
+  display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 800; letter-spacing: 0.05em; color: #111312;
+}}
+.pill-add {{ background: #6fd3a8; }}
+.pill-waiver {{ background: #8fbaf0; }}
+.pill-drop {{ background: #c9c8c0; }}
+.pill-trade {{ background: #f6c453; }}
+
+/* ---- Feed ---- */
+.feed-day {{ margin: 1.4rem 0 0.4rem; font-weight: 700; font-size: 0.95rem; opacity: 0.75; }}
+.feed-row {{
+  display: flex; gap: 0.75rem; align-items: baseline; padding: 0.55rem 0;
+  border-bottom: 1px solid rgba(128,128,128,0.18);
+}}
+.feed-time {{ flex: none; width: 4.75rem; font-size: 0.85rem; opacity: 0.65; }}
+.feed-pill {{ flex: none; width: 4.5rem; }}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ======================================================================= League wire
+
+KIND_PILL = {"Add": "add", "Waiver": "waiver", "Drop": "drop", "Trade": "trade"}
+
+
+def _names(players):
+    return ", ".join(f"<b>{html.escape(p)}</b>" for p in players)
+
+
+@st.cache_data(ttl=3600)
+def league_moves():
+    """Collapse the transaction log (one row per player moved) into one entry
+    per transaction, each with a kind and a sentence of HTML."""
+    tx = load("transactions")
+    if tx is None or "move_id" not in tx.columns:
+        return []
+    tx = tx.with_columns(
+        when=pl.from_epoch("date", time_unit="ms").dt.replace_time_zone("UTC")
+        .dt.convert_time_zone("America/New_York"))
+    moves = []
+    for (move_id,), g in tx.group_by(["move_id"], maintain_order=True):
+        rows = g.to_dicts()
+        when = rows[0]["when"]
+        teams = sorted({r["team"] for r in rows} | {r["to_team"] for r in rows if r["to_team"]})
+        if any(r["action"] == "TRADED" for r in rows):
+            gets = {}
+            for r in rows:
+                gets.setdefault(r["to_team"], []).append(r["player"])
+            sides = [f"{html.escape(t)} get {_names(p)}" for t, p in gets.items()]
+            text = "Trade: " + " · ".join(sides)
+            kind = "Trade"
+        else:
+            team = html.escape(rows[0]["team"])
+            claimed = [r["player"] for r in rows if r["action"] == "WAIVER ADDED"]
+            added = [r["player"] for r in rows if r["action"] == "FA ADDED"]
+            dropped = [r["player"] for r in rows if r["action"] == "DROPPED"]
+            parts = []
+            if claimed:
+                parts.append(f"claimed {_names(claimed)} off waivers")
+            if added:
+                parts.append(f"added {_names(added)}")
+            if dropped:
+                parts.append(f"dropped {_names(dropped)}")
+            text = f"{team} " + ", ".join(parts)
+            kind = "Waiver" if claimed else "Add" if added else "Drop"
+        moves.append({"id": move_id, "when": when, "kind": kind, "teams": teams,
+                      "players": [r["player"] for r in rows], "html": text})
+    moves.sort(key=lambda m: m["when"], reverse=True)
+    return moves
+
+
+def ago(when):
+    secs = (datetime.now(timezone.utc) - when.astimezone(timezone.utc)).total_seconds()
+    if secs < 3600:
+        return f"{max(1, int(secs // 60))}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    days = int(secs // 86400)
+    return f"{days}d ago" if days < 14 else when.strftime("%b %d")
+
+
+def pill(kind):
+    return f'<span class="pill pill-{KIND_PILL[kind]}">{kind.upper()}</span>'
+
+
+def render_ticker():
+    """The five most recent moves, scrolling. Hover (or focus) pauses it;
+    reduced-motion users get a static wrapped list instead."""
+    moves = league_moves()[:5]
+    if not moves:
+        return
+    items = "".join(
+        f'<span class="wire-item">{pill(m["kind"])} {m["html"]} '
+        f'<span class="wire-when">{ago(m["when"])}</span></span>'
+        for m in moves
+    )
+    # The track holds two copies so the loop is seamless; screen readers and
+    # reduced-motion users get just the first.
+    st.markdown(
+        f'<div class="wire" role="region" aria-label="Latest league moves">'
+        f'<div class="wire-label">LEAGUE WIRE</div>'
+        f'<div class="wire-window"><div class="wire-track">'
+        f'{items}<span class="wire-item" aria-hidden="true" style="display:contents">{items}</span>'
+        f'</div></div>'
+        f'<a class="wire-link" href="?view=moves" target="_self">All moves &rarr;</a>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_moves_feed():
+    """Every transaction this season, newest first, with filters."""
+    st.markdown('<a href="./" target="_self">&larr; Back to the dashboard</a>',
+                unsafe_allow_html=True)
+    st.title("League wire")
+    moves = league_moves()
+    if not moves:
+        st.info("No league moves yet.")
+        return
+
+    all_teams = sorted({t for m in moves for t in m["teams"]})
+    c1, c2, c3 = st.columns([2, 2, 2])
+    with c1:
+        teams = st.multiselect("Team", all_teams, placeholder="All teams")
+    with c2:
+        kinds = st.multiselect("Type", list(KIND_PILL), placeholder="All moves")
+    with c3:
+        query = st.text_input("Search player")
+
+    shown = [
+        m for m in moves
+        if (not teams or set(teams) & set(m["teams"]))
+        and (not kinds or m["kind"] in kinds)
+        and (not query or any(query.lower() in p.lower() for p in m["players"]))
+    ]
+    counts = {k: sum(m["kind"] == k for m in shown) for k in KIND_PILL}
+    st.caption(f"{len(shown)} of {len(moves)} moves · "
+               + " · ".join(f"{v} {k.lower()}{'s' if v != 1 else ''}" for k, v in counts.items()))
+
+    out, day = [], None
+    for m in shown:
+        w = m["when"]
+        d = f"{w:%A, %B} {w.day}"   # no %-d: it isn't portable to Windows
+        if d != day:
+            out.append(f'<div class="feed-day">{d}</div>')
+            day = d
+        out.append(
+            f'<div class="feed-row"><span class="feed-time">'
+            f'{w.hour % 12 or 12}:{w:%M} {"am" if w.hour < 12 else "pm"}</span>'
+            f'<span class="feed-pill">{pill(m["kind"])}</span><span>{m["html"]}</span></div>')
+    st.markdown("".join(out) or "_Nothing matches those filters._", unsafe_allow_html=True)
+
+    # Who's been busiest? Single series, so no legend -- the title names it.
+    st.divider()
+    st.subheader("Moves by team")
+    by_team = (pl.DataFrame([{"Team": t, "kind": m["kind"]} for m in moves for t in m["teams"]])
+               .group_by("Team").agg(Moves=pl.len()).sort("Moves", descending=True))
+    chart = alt.Chart(by_team.to_pandas()).mark_bar(
+        color=PALETTE[0], cornerRadiusEnd=4, size=16).encode(
+        x=alt.X("Moves:Q", title="Transactions this season"),
+        y=alt.Y("Team:N", sort="-x", title=None, axis=alt.Axis(labelLimit=320)),
+        tooltip=["Team", "Moves"],
+    ).properties(height=30 * by_team.height)
+    st.altair_chart(chart, width="stretch")
 
 
 # ======================================================================= League
@@ -84,7 +336,9 @@ def render_league():
             "Proj W": st.column_config.NumberColumn("Proj W", format="%.1f"),
         }
     table = table.sort(["standing", "points_for"], descending=[False, True]).select(cols)
-    st.dataframe(table, width="stretch", hide_index=True, column_config=config)
+    # Tall enough for every team -- no scrolling inside the standings.
+    st.dataframe(table, width="stretch", hide_index=True, column_config=config,
+                 height=35 * (table.height + 1) + 3)
     if odds is not None:
         st.caption("Playoff odds simulate every remaining regular-season week 10,000 "
                    "times. Future weeks assume each team starts its best projected "
@@ -509,7 +763,14 @@ def render_accuracy():
             )
 
 
-st.title("League Dashboard")
+apply_theme()
+
+if st.query_params.get("view") == "moves":
+    render_moves_feed()
+    st.stop()
+
+st.title("🏈 League Dashboard")
+render_ticker()
 league_tab, projections_tab, accuracy_tab = st.tabs(["League", "Projections", "Model accuracy"])
 with league_tab:
     render_league()
